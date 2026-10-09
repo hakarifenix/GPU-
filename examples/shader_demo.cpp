@@ -62,6 +62,7 @@ struct Options {
     int threads = 0;
     int tileSize = 32;
     bool overlay = false;
+    bool verboseHud = false;
     std::string prefix = "shader";
 };
 
@@ -73,6 +74,7 @@ void printUsage() {
         "  --threads N     rasterizer worker threads (default: hardware concurrency)\n"
         "  --tile N        tile size in pixels (default 32)\n"
         "  --overlay       draw the debug HUD into the images\n"
+        "  --verbose-hud    extended HUD: shaders, memory and frame-time graph\n"
         "  --prefix NAME   output file prefix (default shader)\n");
 }
 
@@ -104,6 +106,8 @@ int main(int argc, char** argv) {
             options.tileSize = std::atoi(argv[++i]);
         } else if (std::strcmp(arg, "--overlay") == 0) {
             options.overlay = true;
+        } else if (std::strcmp(arg, "--verbose-hud") == 0) {
+            options.verboseHud = true;
         } else if (std::strcmp(arg, "--prefix") == 0 && hasNext) {
             options.prefix = argv[++i];
         } else {
@@ -184,7 +188,7 @@ int main(int argc, char** argv) {
 
         if (options.overlay) {
             debug::Overlay overlay(device.framebuffer(), 2);
-            overlay.drawHud(device.stats());
+            overlay.drawHud(device.stats(), 8, 8, options.verboseHud);
         }
 
         const std::string path = options.prefix + "_" + variant.suffix + ".ppm";

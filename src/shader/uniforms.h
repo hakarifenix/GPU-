@@ -30,6 +30,7 @@ struct ShaderUniforms {
     math::Vec3 cameraPosition{0.0f, 0.0f, 0.0f};         // world space
     Lights lights;
     float time = 0.0f;  // seconds since the first frame (animation input)
+    bool simd = true;   // allow the SIMD vertex fast path (RenderConfig::enableSimd)
 };
 
 }  // namespace nova::shader

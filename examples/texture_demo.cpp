@@ -40,6 +40,7 @@ struct Options {
     int threads = 0;
     int tileSize = 32;
     bool overlay = false;
+    bool verboseHud = false;
     std::string prefix = "texture";
     std::string texturePath = "assets/nova_checker.ppm";
     std::string gridPath = "assets/nova_uv.ppm";
@@ -55,6 +56,7 @@ void printUsage() {
         "  --texture PATH  PPM texture to load (default assets/nova_checker.ppm)\n"
         "  --grid PATH     uv-grid PPM (default assets/nova_uv.ppm)\n"
         "  --overlay       draw the debug HUD into the images\n"
+        "  --verbose-hud    extended HUD: shaders, memory and frame-time graph\n"
         "  --prefix NAME   output file prefix (default texture)\n");
 }
 
@@ -107,6 +109,8 @@ int main(int argc, char** argv) {
             options.gridPath = argv[++i];
         } else if (std::strcmp(arg, "--overlay") == 0) {
             options.overlay = true;
+        } else if (std::strcmp(arg, "--verbose-hud") == 0) {
+            options.verboseHud = true;
         } else if (std::strcmp(arg, "--prefix") == 0 && hasNext) {
             options.prefix = argv[++i];
         } else {
@@ -185,7 +189,7 @@ int main(int argc, char** argv) {
 
         if (options.overlay) {
             debug::Overlay overlay(device.framebuffer(), 2);
-            overlay.drawHud(device.stats());
+            overlay.drawHud(device.stats(), 8, 8, options.verboseHud);
         }
 
         const std::string path = options.prefix + "_" + variant.suffix + ".ppm";
@@ -243,7 +247,7 @@ int main(int argc, char** argv) {
 
     if (options.overlay) {
         debug::Overlay overlay(device.framebuffer(), 2);
-        overlay.drawHud(device.stats());
+        overlay.drawHud(device.stats(), 8, 8, options.verboseHud);
     }
     const std::string litPath = options.prefix + "_lit.ppm";
     if (!platform::writePpm(litPath, device.framebuffer())) {

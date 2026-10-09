@@ -32,6 +32,7 @@ struct Options {
     int threads = 0;  // 0 = hardware concurrency
     int tileSize = 32;
     bool overlay = true;
+    bool verboseHud = false;
     std::string out = "triangle.ppm";
 };
 
@@ -43,6 +44,7 @@ void printUsage() {
         "  --threads N   rasterizer worker threads (default: hardware concurrency)\n"
         "  --tile N      tile size in pixels (default 32)\n"
         "  --no-overlay  do not draw the debug HUD into the image\n"
+        "  --verbose-hud    extended HUD: shaders, memory and frame-time graph\n"
         "  --out PATH    output PPM path (default triangle.ppm)\n");
 }
 
@@ -68,6 +70,8 @@ int main(int argc, char** argv) {
             options.tileSize = std::atoi(argv[++i]);
         } else if (std::strcmp(arg, "--no-overlay") == 0) {
             options.overlay = false;
+        } else if (std::strcmp(arg, "--verbose-hud") == 0) {
+            options.verboseHud = true;
         } else if (std::strcmp(arg, "--out") == 0 && hasNext) {
             options.out = argv[++i];
         } else {
@@ -115,7 +119,7 @@ int main(int argc, char** argv) {
 
     if (options.overlay) {
         debug::Overlay overlay(device.framebuffer(), 2);
-        overlay.drawHud(device.stats());
+        overlay.drawHud(device.stats(), 8, 8, options.verboseHud);
     }
 
     if (!platform::writePpm(options.out, device.framebuffer())) {

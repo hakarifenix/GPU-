@@ -2,7 +2,9 @@
 
 #include <chrono>
 
+#include "math/bounds.h"
 #include "pipeline/clipper.h"
+#include "pipeline/frustum.h"
 #include "pipeline/triangle_setup.h"
 #include "pipeline/vertex_processor.h"
 
@@ -52,7 +54,27 @@ void CommandProcessor::executeDraw(const DrawCommand& command, debug::StageTimin
     const size_t triangleCount = mesh.triangleCount();
 
     ++counters.drawCalls;
+    ++counters.objectsSubmitted;
     counters.trianglesSubmitted += triangleCount;
+
+    // --- object visibility (frustum culling) ---------------------------------
+    // Reject the whole draw when its world bounds miss the frustum: no vertices
+    // are transformed and no triangles are binned, which is why this pays for
+    // itself on any object with more than a handful of triangles.
+    if (config_.frustumCulling) {
+        const auto cullBegin = Clock::now();
+        const pipeline::Frustum frustum =
+            pipeline::Frustum::fromViewProjection(command.uniforms.viewProjection);
+        const math::Aabb worldBounds = mesh.bounds().transformed(command.uniforms.model);
+        const bool visible = frustum.intersects(worldBounds);
+        timings.cullMs += millisSince(cullBegin);
+        if (!visible) {
+            ++counters.objectsCulled;
+            counters.trianglesFrustumCulled += triangleCount;
+            return;
+        }
+    }
+
     counters.verticesProcessed += vertexCount;
 
     // One constant block per draw, shared by every triangle it produces.

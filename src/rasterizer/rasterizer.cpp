@@ -12,13 +12,15 @@ Rasterizer::Rasterizer(const core::RenderConfig& config, core::Framebuffer& fram
     tileSize_ = config_.tileSize > 0 ? config_.tileSize : 32;
     tilesX_ = (width_ + tileSize_ - 1) / tileSize_;
     tilesY_ = (height_ + tileSize_ - 1) / tileSize_;
-    bins_.resize(tileCount());
+    binOffsets_.assign(tileCount() + 1, 0);
+    binCounts_.assign(tileCount(), 0);
 }
 
 void Rasterizer::beginFrame() {
     triangles_.clear();
     uniformBlocks_.clear();
-    for (std::vector<uint32_t>& bin : bins_) bin.clear();
+    binIndices_.clear();
+    for (uint32_t& count : binCounts_) count = 0;
     counters_ = debug::RenderCounters{};
     counters_.pixelsPerFrame =
         static_cast<uint64_t>(framebuffer_.pixelCount());
@@ -36,28 +38,57 @@ void Rasterizer::submit(const pipeline::ScreenTriangle& triangle,
                         const shader::FragmentShader& shader, uint32_t uniformBlock) {
     if (!triangle.hasCoverage()) return;
 
-    const uint32_t index = static_cast<uint32_t>(triangles_.size());
     triangles_.push_back(WorkItem{triangle, &shader, uniformBlock});
     ++counters_.trianglesRasterized;
 
-    const int tx0 = triangle.minX / tileSize_;
-    const int tx1 = triangle.maxX / tileSize_;
-    const int ty0 = triangle.minY / tileSize_;
-    const int ty1 = triangle.maxY / tileSize_;
-
-    for (int ty = ty0; ty <= ty1; ++ty) {
-        const size_t rowBase = static_cast<size_t>(ty) * static_cast<size_t>(tilesX_);
-        for (int tx = tx0; tx <= tx1; ++tx) {
-            bins_[rowBase + static_cast<size_t>(tx)].push_back(index);
-            ++tileTrianglePairs_;
+    // Pass 1 of the counting sort: count the tiles this triangle covers.
+    forEachTile(triangle, [&](int tx0, int tx1, int ty0, int ty1) {
+        for (int ty = ty0; ty <= ty1; ++ty) {
+            const size_t rowBase = static_cast<size_t>(ty) * static_cast<size_t>(tilesX_);
+            for (int tx = tx0; tx <= tx1; ++tx) {
+                ++binCounts_[rowBase + static_cast<size_t>(tx)];
+                ++tileTrianglePairs_;
+            }
         }
+    });
+}
+
+void Rasterizer::buildBins() {
+    const size_t tiles = tileCount();
+    uint32_t running = 0;
+    for (size_t tile = 0; tile < tiles; ++tile) {
+        binOffsets_[tile] = running;
+        running += binCounts_[tile];
+    }
+    binOffsets_[tiles] = running;
+
+    binIndices_.resize(running);
+    if (running == 0) return;
+
+    // Reuse the counts as per-tile write cursors starting at each bin's offset.
+    for (size_t tile = 0; tile < tiles; ++tile) binCounts_[tile] = binOffsets_[tile];
+
+    // Pass 2: walk triangles in submission order so every bin keeps the order
+    // the triangles were submitted in (deterministic, thread-count independent).
+    for (uint32_t index = 0; index < triangles_.size(); ++index) {
+        const pipeline::ScreenTriangle& triangle = triangles_[index].triangle;
+        forEachTile(triangle, [&](int tx0, int tx1, int ty0, int ty1) {
+            for (int ty = ty0; ty <= ty1; ++ty) {
+                const size_t rowBase = static_cast<size_t>(ty) * static_cast<size_t>(tilesX_);
+                for (int tx = tx0; tx <= tx1; ++tx) {
+                    const size_t tile = rowBase + static_cast<size_t>(tx);
+                    binIndices_[binCounts_[tile]++] = index;
+                }
+            }
+        });
     }
 }
 
 void Rasterizer::rasterizeTile(uint64_t tileIndex, uint64_t& fragmentsTested,
                                uint64_t& fragmentsShaded) {
-    const std::vector<uint32_t>& bin = bins_[tileIndex];
-    if (bin.empty()) return;
+    const uint32_t binBegin = binOffsets_[tileIndex];
+    const uint32_t binEnd = binOffsets_[tileIndex + 1];
+    if (binBegin == binEnd) return;
 
     const int tx = static_cast<int>(tileIndex % static_cast<uint64_t>(tilesX_));
     const int ty = static_cast<int>(tileIndex / static_cast<uint64_t>(tilesX_));
@@ -71,9 +102,13 @@ void Rasterizer::rasterizeTile(uint64_t tileIndex, uint64_t& fragmentsTested,
     const bool depthTest = config_.depthTest;
     const bool depthWrite = config_.depthWrite;
 
-    for (const uint32_t index : bin) {
-        const WorkItem& item = triangles_[index];
-        const pipeline::ScreenTriangle& tri = item.triangle;
+    for (uint32_t slot = binBegin; slot < binEnd; ++slot) {
+        const WorkItem& item = triangles_[binIndices_[slot]];
+        // Work on a local copy of the triangle. The fragment loop writes through
+        // colorRow/depthRow, which the compiler must otherwise assume can alias
+        // the queued triangle - copying it once per tile-triangle lets the hot
+        // loop keep the edge coefficients and attributes in registers.
+        const pipeline::ScreenTriangle tri = item.triangle;
         if (item.shader == nullptr) continue;
         if (item.uniformBlock >= uniformBlocks_.size()) continue;
         const shader::FragmentShader& shader = *item.shader;
@@ -152,16 +187,16 @@ void Rasterizer::rasterizeTile(uint64_t tileIndex, uint64_t& fragmentsTested,
 }
 
 size_t Rasterizer::workingSetBytes() const {
-    size_t bytes = triangles_.capacity() * sizeof(WorkItem) +
-                   uniformBlocks_.capacity() * sizeof(shader::ShaderUniforms);
-    for (const std::vector<uint32_t>& bin : bins_) {
-        bytes += bin.capacity() * sizeof(uint32_t) + sizeof(std::vector<uint32_t>);
-    }
-    return bytes;
+    return triangles_.capacity() * sizeof(WorkItem) +
+           uniformBlocks_.capacity() * sizeof(shader::ShaderUniforms) +
+           (binOffsets_.capacity() + binIndices_.capacity() + binCounts_.capacity()) *
+               sizeof(uint32_t);
 }
 
 void Rasterizer::flush() {
     if (triangles_.empty()) return;
+
+    buildBins();
 
     const uint64_t tileTotal = tileCount();
     core::ThreadPool* pool = config_.enableThreads ? pool_ : nullptr;

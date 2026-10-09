@@ -23,6 +23,11 @@ struct RenderConfig {
     bool clipNearPlane = true;  // near-plane clipping + w > 0 clipping
     bool cullDegenerate = true; // drop zero-area triangles
 
+    // Phase 5 optimisation switches. Both default on; the benchmark can turn
+    // them off to measure what they are actually worth (see --compare).
+    bool frustumCulling = true;  // reject draw calls wholly outside the frustum
+    bool enableSimd = true;      // use SIMD vertex transforms when available
+
     bool clearColor = true;
     bool clearDepth = true;
 };

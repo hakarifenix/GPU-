@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <vector>
 
+
 #include "core/config.h"
 #include "core/framebuffer.h"
 #include "core/thread_pool.h"
@@ -80,6 +81,20 @@ private:
 
     void rasterizeTile(uint64_t tileIndex, uint64_t& fragmentsTested, uint64_t& fragmentsShaded);
 
+    // Turns the per-tile triangle counts accumulated by submit() into the flat
+    // index array (counting sort, stable in submission order).
+    void buildBins();
+
+    // Calls fn(tx0, tx1, ty0, ty1) with the inclusive tile range a bbox covers.
+    template <typename Fn>
+    void forEachTile(const pipeline::ScreenTriangle& triangle, Fn&& fn) const {
+        const int tx0 = triangle.minX / tileSize_;
+        const int tx1 = triangle.maxX / tileSize_;
+        const int ty0 = triangle.minY / tileSize_;
+        const int ty1 = triangle.maxY / tileSize_;
+        fn(tx0, tx1, ty0, ty1);
+    }
+
     const core::RenderConfig& config_;
     core::Framebuffer& framebuffer_;
     core::ThreadPool* pool_;
@@ -91,7 +106,13 @@ private:
     int tilesY_ = 0;
 
     std::vector<WorkItem> triangles_;
-    std::vector<std::vector<uint32_t>> bins_;
+    // Flat tile bins in CSR form: binOffsets_[tile]..binOffsets_[tile + 1] index
+    // into binIndices_. One contiguous array instead of a vector per tile, so
+    // binning is a counting sort with no per-tile allocation, iteration is
+    // linear, and the whole working set is reused across frames.
+    std::vector<uint32_t> binOffsets_;  // tileCount() + 1
+    std::vector<uint32_t> binIndices_;  // triangles per tile, grouped by tile
+    std::vector<uint32_t> binCounts_;   // scratch: counts, then fill cursors
     std::vector<shader::ShaderUniforms> uniformBlocks_;
     uint64_t tileTrianglePairs_ = 0;
 

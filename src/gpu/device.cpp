@@ -15,6 +15,7 @@ Device::Device(const core::RenderConfig& config)
     stats_.width = config_.width;
     stats_.height = config_.height;
     stats_.framebufferBytes = framebuffer_.memoryBytes();
+    stats_.workingSetBytes = framebuffer_.memoryBytes();  // grows with the tile bins
     stats_.threadCount = threadCount_;
     stats_.counters.pixelsPerFrame = static_cast<uint64_t>(framebuffer_.pixelCount());
 }
@@ -24,6 +25,9 @@ void Device::resetStats() {
     stats_.timings = fresh.timings;
     stats_.counters = fresh.counters;
     stats_.counters.pixelsPerFrame = static_cast<uint64_t>(framebuffer_.pixelCount());
+    stats_.frameTimes.clear();
+    stats_.vertexShader = fresh.vertexShader;
+    stats_.fragmentShader = fresh.fragmentShader;
     stats_.fps = 0.0;
     frameMsEma_ = 0.0;
     emaPrimed_ = false;
@@ -56,6 +60,7 @@ shader::ShaderUniforms Device::makeUniforms(const math::Mat4& model,
     uniforms.lights.ambient = ambient_;
     uniforms.lights.directional = light_;
     uniforms.time = time_;
+    uniforms.simd = config_.enableSimd;
     return uniforms;
 }
 
@@ -73,6 +78,11 @@ void Device::draw(const scene::Mesh& mesh, const math::Mat4& model,
     command.draw.fragmentShader = &fragmentShader;
     command.draw.uniforms = makeUniforms(model, viewProjection);
     commands_.push_back(command);
+
+    // Phase 6 debug mode: the HUD names the shaders the last frame actually
+    // used, which is the fastest way to spot "why is this lit?" questions.
+    stats_.vertexShader = vertexShader.name();
+    stats_.fragmentShader = fragmentShader.name();
 }
 
 void Device::endFrame() {
@@ -88,6 +98,8 @@ void Device::endFrame() {
     stats_.counters.trianglesRasterized = rasterCounters.trianglesRasterized;
     stats_.counters.fragmentsTested = rasterCounters.fragmentsTested;
     stats_.counters.fragmentsShaded = rasterCounters.fragmentsShaded;
+    stats_.counters.tileTrianglePairs = rasterizer_.tileTrianglePairs();
+    stats_.workingSetBytes = workingSetBytes();
 
     if (timingEnabled_) {
         stats_.timings.frameMs =
@@ -103,6 +115,8 @@ void Device::endFrame() {
             frameMsEma_ += kAlpha * (stats_.timings.frameMs - frameMsEma_);
         }
         stats_.fps = frameMsEma_ > 0.0 ? 1000.0 / frameMsEma_ : 0.0;
+        // Keep a short window of raw frame times for the debug overlay graph.
+        stats_.frameTimes.push(stats_.timings.frameMs);
     }
 
     commands_.clear();

@@ -8,11 +8,16 @@ NOVA GPU API          src/gpu/device.h
     |
     v
 command processor     src/gpu/command_processor.cpp
-    |  per draw: vertex processing -> clipping -> triangle setup -> submit
+    |  per draw: frustum test -> vertex processing -> clipping -> setup -> submit
+    v
+visibility            src/pipeline/frustum.h, src/math/bounds.h
+    |  six planes from the view-projection matrix vs the mesh's world AABB;
+    |  a rejected draw costs no vertex work at all (Phase 5)
     v
 vertex processing     src/pipeline/vertex_processor.cpp
-    |  runs the draw's VertexShader: model -> clip (homogeneous, w > 0)
+    |  one shadeBatch() call per draw: model -> clip (homogeneous, w > 0)
     |                       + varyings (world position, normal, color, uv)
+    |  the default shader is 4-wide SSE2 with a scalar batch fallback
     v
 clipping              src/pipeline/clipper.cpp
     |  Sutherland-Hodgman against z + w >= 0 and w >= 0, in clip space
@@ -43,9 +48,9 @@ vendor SDK and no GPU dependency anywhere in the renderer.
 | Path | Contents |
 | --- | --- |
 | `src/core` | framebuffer/color/depth, vertex format, render config, thread pool |
-| `src/math` | Vec2/3/4, Mat4 + transforms, edge function and barycentric coordinates |
+| `src/math` | Vec2/3/4, Mat4 + transforms, edge function and barycentric coordinates, AABB/bounding-sphere bounds, optional SSE2 helpers |
 | `src/memory` | `Buffer<T>` (typed storage used by meshes) |
-| `src/pipeline` | viewport, clip vertices, vertex processor, clipper, triangle setup |
+| `src/pipeline` | viewport, clip vertices, vertex processor, clipper, triangle setup, frustum extraction/tests |
 | `src/rasterizer` | tiled rasterizer (binning + per-tile fragment loops) |
 | `src/shader` | vertex/fragment shader interfaces, the `Varying` payload, the `ShaderUniforms` block and the built-in shaders |
 | `src/texture` | `Texture` + sampler (nearest/bilinear, repeat/clamp), procedural constructors, PPM image I/O |
@@ -57,7 +62,7 @@ vendor SDK and no GPU dependency anywhere in the renderer.
 | `src/debug` | stats, console report, framebuffer overlay, 3x5 font |
 | `tests` | unit and integration tests (`nova_tests`) |
 | `examples` | triangle, rotating-cube, shader, texture and lighting demos |
-| `benchmarks` | triangle-count scaling and thread scaling benchmark |
+| `benchmarks` | triangle-count scaling, thread scaling, per-stage profiling, optimisation A/B (`nova_benchmark`) and the isolated vertex stage (`nova_benchmark_vertex`) |
 
 ## Conventions (fixed and tested)
 
@@ -90,7 +95,9 @@ vendor SDK and no GPU dependency anywhere in the renderer.
 ## Rasterization model
 
 1. `Rasterizer::submit()` bins every triangle into the tiles its bounding box
-   covers. Binning happens once per triangle, on the command-processor thread.
+   covers. Binning happens once per triangle, on the command-processor thread,
+   as a counting sort into flat CSR arrays (`binOffsets_`/`binIndices_`) -
+   one contiguous working set, no per-tile allocation, reused across frames.
 2. `Rasterizer::flush()` rasterizes one tile per parallel job from a single
    atomic work counter, so all cores stay busy on tiny and huge triangles alike.
 3. Inside a tile, each triangle gets an integer pixel range, edge weights at the
@@ -111,7 +118,10 @@ bit-identical between one thread and many - see the
 
 The device times each stage with `std::chrono::steady_clock`:
 
-* `vertexMs` - per-vertex shader execution for every submitted draw call.
+* `cullMs` - the frustum test on each submitted draw (0.0 ms when culling is
+  off or every object is visible).
+* `vertexMs` - the whole vertex stage: one `shadeBatch()` call per draw, so the
+  draw's matrix product is computed once per stream instead of once per vertex.
 * `clipMs` - *only* the triangles that actually cross a clip plane (fully visible
   geometry takes a fast path that never touches the clipper, so this is normally
   0.0 ms and costs no timestamps in the hot loop).
@@ -126,6 +136,6 @@ The device times each stage with `std::chrono::steady_clock`:
 | 2 shader system | **done** - `shader::VertexShader` / `shader::FragmentShader`, `Varying`, `ShaderUniforms`; see `docs/shaders.md` |
 | 3 textures | **done** - `src/texture` storage, nearest/bilinear sampling, wrap modes, PPM loading; see `docs/textures.md`. Mipmaps remain |
 | 4 lighting | **done** - `src/lighting` ambient + directional diffuse + Blinn-Phong specular; see `docs/lighting.md`. Light arrays, point/spot lights and shadows remain |
-| 5 performance | frustum culling in the command processor, packed bin layout in the rasterizer, SIMD in the fragment loop, texture cache-friendly sampling - profile first (the specular cutoff in `lighting::shade` is the first measured win) |
-| 6 debugging | `debug::Overlay` + `debug::printStats` (the counters already drive them) |
+| 5 performance | **done** - frustum culling, packed flat tile bins, batched + SIMD vertex stage, profiling tooling (`--profile`/`--compare`/`--culling-scene`); see `docs/performance.md`. The fragment loop (74% of the frame) is the next target |
+| 6 debugging | **done** - `debug::Overlay` HUD (compact + verbose with shader names, memory and a frame-time graph), `debug::printStats` with the cull/object/shader lines, per-stage counters; see `docs/output.md` |
 | 7 structure | this document plus `README.md` |

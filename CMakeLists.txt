@@ -86,6 +86,8 @@ if(NOVA_BUILD_TESTS)
         tests/test_barycentric.cpp
         tests/test_framebuffer.cpp
         tests/test_scene.cpp
+        tests/test_frustum.cpp
+        tests/test_debug.cpp
         tests/test_pipeline.cpp
         tests/test_rasterizer.cpp
         tests/test_clipping.cpp
@@ -120,4 +122,7 @@ endif()
 if(NOVA_BUILD_BENCHMARKS)
     add_executable(nova_benchmark benchmarks/benchmark_nova.cpp)
     target_link_libraries(nova_benchmark PRIVATE nova_core)
+
+    add_executable(nova_benchmark_vertex benchmarks/benchmark_vertex.cpp)
+    target_link_libraries(nova_benchmark_vertex PRIVATE nova_core)
 endif()

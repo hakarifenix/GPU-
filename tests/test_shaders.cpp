@@ -6,6 +6,8 @@
 // interpolated attributes (color, uv, screen position, depth), perspective-
 // correct uv interpolation, lighting from the uniform block, and per-draw
 // uniform capture.
+#include <vector>
+
 #include "test_framework.h"
 #include "test_helpers.h"
 
@@ -194,6 +196,113 @@ NOVA_TEST(Shaders, ApplicationVertexShaderIsUsedByThePipeline) {
     const double plainCentroid = centroidX(plainDevice.framebuffer(), core::kBlack);
     const double shiftedCentroid = centroidX(shiftedDevice.framebuffer(), core::kBlack);
     CHECK_NEAR(shiftedCentroid - plainCentroid, 12.8, 0.5);
+}
+
+NOVA_TEST(Shaders, UnwrittenVaryingsUseDefaultsInsteadOfStaleData) {
+    // A shader that only writes clip position must not inherit varyings from a
+    // previous draw: the pipeline resets each vertex output before calling the
+    // shader, so this renders with the default white color.
+    class ClipOnlyVertexShader final : public shader::VertexShader {
+    public:
+        void shade(const core::Vertex& in, const shader::ShaderUniforms&,
+                   shader::VertexOutput& out) const override {
+            out.clip = {in.position.x, in.position.y, 0.0f, 1.0f};
+        }
+    };
+
+    const scene::Mesh mesh = novatest::makeTriangle({-0.5f, -0.5f, 0.0f}, {0.5f, -0.5f, 0.0f},
+                                                    {0.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f});
+    const shader::ColorFragmentShader fragment;
+    const shader::TransformVertexShader transform;
+    const ClipOnlyVertexShader clipOnly;
+
+    gpu::Device device(testConfig(64, 64));
+
+    // Draw 1 fills every varying with a bright red.
+    device.beginFrame(core::kBlack);
+    scene::Mesh red = mesh;
+    for (size_t i = 0; i < red.vertexCount(); ++i) red.vertices[i].color = {1.0f, 0.0f, 0.0f};
+    device.draw(red, math::Mat4::identity(), math::Mat4::identity(), transform, fragment);
+    device.endFrame();
+    CHECK(novatest::countPixels(device.framebuffer(), core::kRed) > 400);
+
+    // Draw 2 writes only clip; the color must be the default white, not the red
+    // that was still in the vertex buffer from draw 1.
+    device.beginFrame(core::kBlack);
+    device.draw(mesh, math::Mat4::identity(), math::Mat4::identity(), clipOnly, fragment);
+    device.endFrame();
+    CHECK(novatest::countPixels(device.framebuffer(), core::kRed) == 0);
+    CHECK(novatest::countPixels(device.framebuffer(), core::kWhite) > 400);
+}
+
+NOVA_TEST(Shaders, ScalarBatchIsBitwisePerVertexShadeAndSimdBatchesAgree) {
+    // The vertex stage is called once per draw with the whole stream, and on
+    // SSE2 it has two implementations. The scalar batch must be exactly what
+    // shade() returns (it is the fallback on non-SSE2 hosts), and the SIMD batch
+    // must agree with it to rounding, so switching uniforms.simd never changes
+    // what the pipeline sees beyond the last bit.
+    const scene::Mesh mesh = scene::makeSphere(1.0f, 24, 12);
+    const size_t count = mesh.vertexCount();
+    CHECK(count > 100);
+
+    shader::ShaderUniforms uniforms;
+    uniforms.model = math::rotationY(math::radians(37.0f)) * math::rotationX(math::radians(15.0f));
+    uniforms.viewProjection =
+        math::perspective(math::radians(55.0f), 1.5f, 0.5f, 100.0f) *
+        math::lookAt({0.0f, 1.5f, 4.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+
+    const shader::TransformVertexShader shader;
+    std::vector<shader::VertexOutput> perVertex(count);
+    std::vector<shader::VertexOutput> scalarBatch(count);
+    std::vector<shader::VertexOutput> simdBatch(count);
+
+    for (size_t i = 0; i < count; ++i) shader.shade(mesh.vertices[i], uniforms, perVertex[i]);
+
+    uniforms.simd = false;
+    shader.shadeBatch(mesh.vertices.data(), count, uniforms, scalarBatch.data());
+    uniforms.simd = true;
+    shader.shadeBatch(mesh.vertices.data(), count, uniforms, simdBatch.data());
+
+    // Sanity: the transform really moved the vertices, so the comparisons below
+    // are not two equal arrays of zeros.
+    CHECK(scalarBatch[0].clip.w != 0.0f);
+    size_t moved = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const math::Vec3& p = mesh.vertices[i].position;
+        const math::Vec4& clip = scalarBatch[i].clip;
+        if (clip.x != p.x || clip.y != p.y || clip.z != p.z) ++moved;
+    }
+    CHECK(moved > count / 2);
+
+    size_t differing = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const shader::VertexOutput& a = perVertex[i];
+        const shader::VertexOutput& b = scalarBatch[i];
+        const shader::VertexOutput& c = simdBatch[i];
+
+        // Scalar batch: identical operations in identical order, so bitwise.
+        if (a.clip.x != b.clip.x || a.clip.y != b.clip.y || a.clip.z != b.clip.z ||
+            a.clip.w != b.clip.w || a.varying.worldPosition.x != b.varying.worldPosition.x ||
+            a.varying.worldPosition.y != b.varying.worldPosition.y ||
+            a.varying.worldPosition.z != b.varying.worldPosition.z ||
+            a.varying.normal.x != b.varying.normal.x || a.varying.normal.y != b.varying.normal.y ||
+            a.varying.normal.z != b.varying.normal.z || a.varying.color.x != b.varying.color.x ||
+            a.varying.uv.x != b.varying.uv.x) {
+            ++differing;
+        }
+
+        // SIMD batch: the additions group differently, so it may differ by one
+        // rounding step - never by more than a tight absolute epsilon.
+        CHECK_NEAR(c.clip.x, b.clip.x, 1e-5f);
+        CHECK_NEAR(c.clip.y, b.clip.y, 1e-5f);
+        CHECK_NEAR(c.clip.z, b.clip.z, 1e-5f);
+        CHECK_NEAR(c.clip.w, b.clip.w, 1e-5f);
+        CHECK_NEAR(c.varying.worldPosition.x, b.varying.worldPosition.x, 1e-5f);
+        CHECK_NEAR(c.varying.normal.y, b.varying.normal.y, 1e-5f);
+        CHECK(c.varying.color.x == b.varying.color.x);
+        CHECK(c.varying.uv.y == b.varying.uv.y);
+    }
+    CHECK_EQ(static_cast<int>(differing), 0);
 }
 
 NOVA_TEST(Shaders, FragmentShaderReceivesScreenPositionAndDepth) {

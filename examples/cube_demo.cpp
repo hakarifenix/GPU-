@@ -42,6 +42,7 @@ struct Options {
     int frames = 1;
     float degreesPerFrame = 2.0f;
     bool overlay = true;
+    bool verboseHud = false;
     bool flythrough = false;
     bool animate = false;
     bool debug = false;
@@ -60,6 +61,7 @@ void printUsage() {
         "  --flythrough     move the camera through the cube (exercises clipping)\n"
         "  --animate        write cube_0000.ppm, cube_0001.ppm, ...\n"
         "  --no-overlay     do not draw the debug HUD into the image\n"
+        "  --verbose-hud    extended HUD: shaders, memory and frame-time graph\n"
         "  --debug          print the frame statistics to the console every frame\n"
         "  --out PATH       output path for the final frame (default cube.ppm)\n");
 }
@@ -106,6 +108,8 @@ int main(int argc, char** argv) {
             options.animate = true;
         } else if (std::strcmp(arg, "--no-overlay") == 0) {
             options.overlay = false;
+        } else if (std::strcmp(arg, "--verbose-hud") == 0) {
+            options.verboseHud = true;
         } else if (std::strcmp(arg, "--debug") == 0) {
             options.debug = true;
         } else if (std::strcmp(arg, "--out") == 0 && hasNext) {
@@ -174,7 +178,7 @@ int main(int argc, char** argv) {
         device.draw(cube, model, cam.viewProjection(), shader);
         device.endFrame();
 
-        if (options.overlay) overlay.drawHud(device.stats());
+        if (options.overlay) overlay.drawHud(device.stats(), 8, 8, options.verboseHud);
         if (options.debug) debug::printStatsLine(device.stats());
 
         // Write the final frame, and every frame when animating.
