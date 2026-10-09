@@ -1,0 +1,29 @@
+// NOVA GPU - Software GPU
+// src/pipeline/clip_vertex.h - the vertex payload that flows through the
+// vertex processing -> clipping -> triangle setup stages.
+#pragma once
+
+#include "math/vec.h"
+#include "shader/varying.h"
+
+namespace nova::pipeline {
+
+// A vertex in homogeneous clip space plus the shader varyings that must survive
+// clipping. Clipping interpolates all of these linearly in clip space, which is
+// correct because clip space is linear in the triangle's parameter domain.
+struct ClipVertex {
+    math::Vec4 clip;         // (x, y, z, w), w > 0 after clipping
+    shader::Varying varying; // whatever the vertex shader wrote
+
+    float invW() const { return clip.w != 0.0f ? 1.0f / clip.w : 0.0f; }
+};
+
+// Linear interpolation between two clip vertices; t = 0 gives `a`, t = 1 `b`.
+inline ClipVertex lerpClipVertex(const ClipVertex& a, const ClipVertex& b, float t) {
+    ClipVertex out;
+    out.clip = math::lerp(a.clip, b.clip, t);
+    out.varying = shader::lerpVarying(a.varying, b.varying, t);
+    return out;
+}
+
+}  // namespace nova::pipeline

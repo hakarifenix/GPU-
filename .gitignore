@@ -1,0 +1,18 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+bin/
+out/
+
+# Rendered images produced by the examples
+*.ppm
+*.png
+!docs/*.png
+
+# Checked-in demo textures (assets/)
+!assets/*.ppm
+
+# Toolchain installed locally for this workspace (see docs/build.md)
+tools/venv-cmake/
+tools/**/__pycache__/
