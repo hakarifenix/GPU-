@@ -126,3 +126,60 @@ if(NOVA_BUILD_BENCHMARKS)
     add_executable(nova_benchmark_vertex benchmarks/benchmark_vertex.cpp)
     target_link_libraries(nova_benchmark_vertex PRIVATE nova_core)
 endif()
+
+# --- install / package (Phase 7) ---------------------------------------------
+# Everything the demos need at runtime is installed into one tree, so the
+# packaged archive is directly usable after extracting it:
+#
+#     bin/      demos, benchmarks and the test runner
+#     docs/     the documentation set
+#     assets/   checked-in demo textures
+#     README.md
+#
+# Build it with:   cmake --build <dir> --target package
+# or end to end:   tools/package.sh   (Release build -> tests -> archive)
+include(GNUInstallDirs)
+
+set(NOVA_INSTALL_TARGETS "")
+if(NOVA_BUILD_TESTS)
+    list(APPEND NOVA_INSTALL_TARGETS nova_tests)
+endif()
+if(NOVA_BUILD_EXAMPLES)
+    list(APPEND NOVA_INSTALL_TARGETS nova_triangle_demo nova_cube_demo nova_shader_demo)
+    list(APPEND NOVA_INSTALL_TARGETS nova_texture_demo nova_lighting_demo)
+endif()
+if(NOVA_BUILD_BENCHMARKS)
+    list(APPEND NOVA_INSTALL_TARGETS nova_benchmark nova_benchmark_vertex)
+endif()
+
+if(NOVA_INSTALL_TARGETS)
+    install(TARGETS ${NOVA_INSTALL_TARGETS}
+            RUNTIME DESTINATION bin
+            BUNDLE DESTINATION bin)
+endif()
+
+install(FILES README.md DESTINATION .)
+install(DIRECTORY docs/ DESTINATION docs
+        FILES_MATCHING PATTERN "*.md")
+install(DIRECTORY assets/ DESTINATION assets
+        FILES_MATCHING PATTERN "*.ppm")
+
+# --- CPack: the downloadable archive -----------------------------------------
+set(CPACK_PACKAGE_NAME "nova-gpu")
+set(CPACK_PACKAGE_VENDOR "NOVA GPU")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/hakarifenix/GPU-")
+set(CPACK_PACKAGE_FILE_NAME
+    "nova-gpu-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_STRIP_FILES ON)   # no debug symbols in a download
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+set(CPACK_PACKAGE_CHECKSUM "SHA256")
+
+if(WIN32)
+    set(CPACK_GENERATOR "ZIP")
+else()
+    set(CPACK_GENERATOR "TGZ")
+endif()
+
+include(CPack)

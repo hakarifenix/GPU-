@@ -128,6 +128,47 @@ The HUD is drawn by the renderer itself into the framebuffer, which is the point
 of a software GPU: `Overlay::hudWidth()`/`hudHeight()` let an application lay out
 around it. Details in `docs/output.md`.
 
+## Phase 7 status - project structure
+
+| Requirement | State |
+| --- | --- |
+| Modular layout, one directory per stage | done (`src/` - 13 modules, see the table below) |
+| Renderer isolated from demos/tests/benchmarks | done (`nova_core` static library, every consumer links it) |
+| Single test runner wired into ctest | done (`nova_tests`, `NOVA_BUILD_TESTS`) |
+| Consistent output location for every executable | done (`build/bin/`) |
+| Build documentation | done (`docs/build.md`) |
+| Installable, distributable artifact | done (`cmake --install`, CPack archive, `tools/package.sh`) |
+
+## Download
+
+Three ways to get it:
+
+**1. Source, no build tools needed for reading** - GitHub's archive of the
+branch:
+
+```
+https://github.com/hakarifenix/GPU-/archive/refs/heads/main.zip
+```
+
+**2. Clone it** (to build and run):
+
+```bash
+git clone https://github.com/hakarifenix/GPU-.git
+cd GPU-
+```
+
+**3. A ready-to-run archive** (binaries + docs + demo textures) - one command
+builds it, tests it and packs it:
+
+```bash
+tools/package.sh
+# -> build-release/nova-gpu-0.1.0-<os>-<arch>.tar.gz  (+ .sha256)
+```
+
+The archive is self-contained: extract it anywhere, then
+`./bin/nova_tests` and `./bin/nova_cube_demo` run from the extracted tree
+without installing anything (`docs/build.md` has the Windows commands).
+
 ## Build
 
 Requirements: CMake 3.16+ and a C++17 compiler. No packages to download.
@@ -361,7 +402,8 @@ See `docs/architecture.md` for the module map, the math conventions, the tiling
 model and where later phases plug in. `docs/shaders.md` covers the shader
 interface, `docs/textures.md` sampling and image loading, `docs/lighting.md` the
 lighting model, `docs/output.md` PPM output and the debug overlay, and
-`docs/performance.md` how the renderer is measured and what changed.
+`docs/performance.md` how the renderer is measured and what changed, and
+`docs/build.md` how to build, run and package it.
 
 ## Roadmap
 
@@ -385,4 +427,8 @@ lighting model, `docs/output.md` PPM output and the debug overlay, and
 * **Phase 6 — debugging: done.** Extended HUD (frame-time window, triangle and
   object culling counts, shader names, memory, frame-time graph), `--verbose-hud`
   on every demo, and the matching console report (`docs/output.md`).
-* **Phase 7 — project structure**: modular layout and tests (already in place).
+* **Phase 7 — project structure: done.** 13-module `src/` layout behind the
+  `nova_core` library, one test runner wired into ctest, `docs/build.md`, and a
+  distributable archive: `tools/package.sh` (build -> test -> CPack) produces a
+  self-contained `nova-gpu-<version>-<os>-<arch>.zip`/`.tar.gz` with a SHA-256
+  checksum - see **Download** above.
